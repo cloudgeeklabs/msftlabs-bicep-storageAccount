@@ -217,26 +217,34 @@ jobs:
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
           TAG_NAME="v${VERSION}"
+          MODULE_REF="br:${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }}:${VERSION}"
+          
+          # Create release notes in a file to avoid shell escaping issues
+          cat > release_notes.md << 'RELEASE_NOTES'
+          **Storage Account Bicep Module v${{ needs.validate.outputs.version }}**
+          
+          **Published to:** `${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }}:${{ needs.validate.outputs.version }}`
+          
+          **Usage:**
+          ```bicep
+          module storage 'br:${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }}:${{ needs.validate.outputs.version }}' = {
+            name: 'storageAccountDeployment'
+            params: {
+              workloadName: 'myapp'
+              location: 'eastus'
+            }
+          }
+          ```
+          
+          See [CHANGELOG.md](CHANGELOG.md) for details.
+          RELEASE_NOTES
           
           # Create release using GitHub CLI
           gh release create "$TAG_NAME" \
             --title "Release ${VERSION}" \
-            --notes "**Storage Account Bicep Module v${VERSION}**
-
-**Published to:** \`${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }}:${VERSION}\`
-
-**Usage:**
-\`\`\`bicep
-module storage 'br:${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }}:${VERSION}' = {
-  name: 'storageAccountDeployment'
-  params: {
-    workloadName: 'myapp'
-    location: 'eastus'
-  }
-}
-\`\`\`
-
-See [CHANGELOG.md](CHANGELOG.md) for details." \
+            --notes-file release_notes.md \
             --repo ${{ github.repository }}
           
           echo "Release created successfully for ${TAG_NAME}"
+          rm release_notes.md
+
