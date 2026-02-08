@@ -23,7 +23,7 @@ env:
   SUBSCRIPTION_ID: b18ea7d6-14b5-41f3-a00d-804a5180c589
 
 permissions:
-  contents: write  # Required for creating GitHub releases
+  contents: read  # Read-only access for checking out code
 
 jobs:
   validate:
@@ -209,42 +209,5 @@ jobs:
           }
           \`\`\`
           EOF
-      
-      - name: Create GitHub Release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          TAG_NAME="v${VERSION}"
-          MODULE_REF="br:${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }}:${VERSION}"
-          
-          # Create release notes in a file to avoid shell escaping issues
-          cat > release_notes.md << 'RELEASE_NOTES'
-          **Storage Account Bicep Module v${{ needs.validate.outputs.version }}**
-          
-          **Published to:** `${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }}:${{ needs.validate.outputs.version }}`
-          
-          **Usage:**
-          ```bicep
-          module storage 'br:${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }}:${{ needs.validate.outputs.version }}' = {
-            name: 'storageAccountDeployment'
-            params: {
-              workloadName: 'myapp'
-              location: 'eastus'
-            }
-          }
-          ```
-          
-          See [CHANGELOG.md](CHANGELOG.md) for details.
-          RELEASE_NOTES
-          
-          # Create release using GitHub CLI
-          gh release create "$TAG_NAME" \
-            --title "Release ${VERSION}" \
-            --notes-file release_notes.md \
-            --repo ${{ github.repository }}
-          
-          echo "Release created successfully for ${TAG_NAME}"
-          rm release_notes.md
+
 
