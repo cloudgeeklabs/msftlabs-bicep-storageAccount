@@ -54,11 +54,12 @@ jobs:
           $config = New-PesterConfiguration
           $config.Run.Path = './tests'
           $config.Run.Exit = $false
+          $config.Run.PassThru = $true  # Required to return result object
           $config.TestResult.Enabled = $true
           $config.TestResult.OutputPath = './test-results.xml'
           $config.TestResult.OutputFormat = 'NUnitXml'
           $config.Output.Verbosity = 'Detailed'
-          $config.Output.CIFormat = 'GithubActions'  # Format output for GitHub Actions
+          $config.Output.CIFormat = 'GithubActions'
           
           Write-Host "Starting Pester tests..." -ForegroundColor Cyan
           $result = Invoke-Pester -Configuration $config
