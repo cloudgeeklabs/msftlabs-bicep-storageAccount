@@ -1,0 +1,33 @@
+# PSRule configuration for Bicep module validation
+# https://azure.github.io/PSRule.Rules.Azure/
+
+binding:
+  targetType:
+    - bicep
+
+configuration:
+  AZURE_BICEP_FILE_EXPANSION: true
+  AZURE_PARAMETER_FILE_EXPANSION: true
+
+rule:
+  include:
+    - Azure.Storage.UseReplication
+    - Azure.Storage.SecureTransfer
+    - Azure.Storage.MinTLS
+    - Azure.Storage.BlobPublicAccess
+    - Azure.Storage.SoftDelete
+    - Azure.RBAC.UseGroups
+    - Azure.Resource.UseTags
+    
+  exclude:
+    - Azure.Storage.Firewall
+
+output:
+  culture:
+    - en-US
+  format: Json
+  outcome: Fail
+  
+suppression:
+  Azure.Storage.Name:
+    reason: Test storage account names may not follow production naming

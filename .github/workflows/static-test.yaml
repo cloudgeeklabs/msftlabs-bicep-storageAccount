@@ -1,0 +1,50 @@
+name: Static Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  bicep-validation:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bicep CLI
+        run: |
+          curl -Lo bicep https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
+          chmod +x ./bicep
+          sudo mv ./bicep /usr/local/bin/bicep
+          bicep --version
+
+      - name: Bicep Lint
+        run: |
+          bicep build main.bicep --stdout
+
+      - name: Generate Dynamic Resource Group Name
+        id: rg-name
+        run: |
+          timestamp=$(date +%s)
+          rg_name="rg-test-${timestamp}"
+          echo "RESOURCE_GROUP=${rg_name}" >> $GITHUB_OUTPUT
+          echo "Generated resource group name: ${rg_name}"
+
+      - name: Bicep Validate (No Azure Auth Required)
+        run: |
+          bicep build main.bicep
+          echo "Validation successful - no deployment or Azure auth needed"
+          echo "Test resource group would be: ${{ steps.rg-name.outputs.RESOURCE_GROUP }}"
+
+      - name: Parameter File Validation
+        run: |
+          if [ -f "main.parameters.json" ]; then
+            echo "Validating parameter file structure..."
+            jq empty main.parameters.json
+          else
+            echo "No parameter file found - skipping validation"
+          fi
