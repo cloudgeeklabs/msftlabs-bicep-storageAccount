@@ -2,6 +2,7 @@
 
 *.json
 !bicepconfig.json
+!tests/test.parameters.json
 *.bicepparam.json
 .DS_Store
 Thumbs.db
