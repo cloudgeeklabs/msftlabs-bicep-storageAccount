@@ -53,13 +53,28 @@ jobs:
         run: |
           $config = New-PesterConfiguration
           $config.Run.Path = './tests'
-          $config.Run.Exit = $true
+          $config.Run.Exit = $false  # Don't exit immediately to allow output to flush
           $config.TestResult.Enabled = $true
           $config.TestResult.OutputPath = './test-results.xml'
           $config.TestResult.OutputFormat = 'NUnitXml'
           $config.Output.Verbosity = 'Detailed'
           
-          Invoke-Pester -Configuration $config
+          $result = Invoke-Pester -Configuration $config
+          
+          # Explicitly output test summary
+          Write-Host "`n========================================" -ForegroundColor Cyan
+          Write-Host "PESTER TEST SUMMARY" -ForegroundColor Cyan
+          Write-Host "========================================" -ForegroundColor Cyan
+          Write-Host "Total Tests: $($result.TotalCount)" -ForegroundColor White
+          Write-Host "Passed: $($result.PassedCount)" -ForegroundColor Green
+          Write-Host "Failed: $($result.FailedCount)" -ForegroundColor $(if ($result.FailedCount -gt 0) { 'Red' } else { 'Green' })
+          Write-Host "Skipped: $($result.SkippedCount)" -ForegroundColor Yellow
+          Write-Host "========================================`n" -ForegroundColor Cyan
+          
+          # Exit with non-zero if tests failed
+          if ($result.FailedCount -gt 0) {
+            exit 1
+          }
       
       - name: Test Summary
         if: always()
