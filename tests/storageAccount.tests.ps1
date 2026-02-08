@@ -64,23 +64,26 @@ Describe "Bicep Module: Storage Account" {
             $template.resources | Should -Not -BeNullOrEmpty
         }
         
-        It "Should define storage account resource" {
+        It "Should define storage account module deployment" {
             $armTemplatePath = $TemplatePath -replace '\.bicep$', '.json'
             $template = Get-Content $armTemplatePath | ConvertFrom-Json
             
-            $storageResource = $template.resources | Where-Object { 
-                $_.type -eq "Microsoft.Storage/storageAccounts" -or
-                $_.type -like "*/storageAccounts"
+            # For module-based templates, deployments are in resources[0] as properties
+            $moduleDeployments = $template.resources[0].PSObject.Properties | Where-Object {
+                $_.Value.type -eq "Microsoft.Resources/deployments"
             }
             
-            $storageResource | Should -Not -BeNullOrEmpty
+            # Should have at least one deployment (storageAccount module)
+            $moduleDeployments | Should -Not -BeNullOrEmpty
+            $moduleDeployments.Name | Should -Contain 'storageAccount'
         }
         
         It "Should have required parameters defined" {
             $armTemplatePath = $TemplatePath -replace '\.bicep$', '.json'
             $template = Get-Content $armTemplatePath | ConvertFrom-Json
             
-            $template.parameters.storageAccountName | Should -Not -BeNullOrEmpty
+            # Check for workloadName (used to generate storage account name) and location
+            $template.parameters.workloadName | Should -Not -BeNullOrEmpty
             $template.parameters.location | Should -Not -BeNullOrEmpty
         }
         
