@@ -53,13 +53,18 @@ jobs:
         run: |
           $config = New-PesterConfiguration
           $config.Run.Path = './tests'
-          $config.Run.Exit = $false  # Don't exit immediately to allow output to flush
+          $config.Run.Exit = $false
           $config.TestResult.Enabled = $true
           $config.TestResult.OutputPath = './test-results.xml'
           $config.TestResult.OutputFormat = 'NUnitXml'
           $config.Output.Verbosity = 'Detailed'
+          $config.Output.CIFormat = 'GithubActions'  # Format output for GitHub Actions
           
+          Write-Host "Starting Pester tests..." -ForegroundColor Cyan
           $result = Invoke-Pester -Configuration $config
+          
+          # Force output buffer flush
+          [Console]::Out.Flush()
           
           # Explicitly output test summary
           Write-Host "`n========================================" -ForegroundColor Cyan
@@ -69,11 +74,15 @@ jobs:
           Write-Host "Passed: $($result.PassedCount)" -ForegroundColor Green
           Write-Host "Failed: $($result.FailedCount)" -ForegroundColor $(if ($result.FailedCount -gt 0) { 'Red' } else { 'Green' })
           Write-Host "Skipped: $($result.SkippedCount)" -ForegroundColor Yellow
+          Write-Host "Duration: $($result.Duration)" -ForegroundColor Gray
           Write-Host "========================================`n" -ForegroundColor Cyan
           
           # Exit with non-zero if tests failed
           if ($result.FailedCount -gt 0) {
+            Write-Host "Tests FAILED" -ForegroundColor Red
             exit 1
+          } else {
+            Write-Host "All tests PASSED" -ForegroundColor Green
           }
       
       - name: Test Summary
@@ -81,21 +90,47 @@ jobs:
         shell: pwsh
         run: |
           if (Test-Path test-results.xml) {
+            Write-Host "Parsing test results..." -ForegroundColor Cyan
+            
             [xml]$testResults = Get-Content test-results.xml
-            $totalTests = $testResults.'test-results'.'total'
-            $failures = $testResults.'test-results'.'failures'
-            $errors = $testResults.'test-results'.'errors'
-            $passed = [int]$totalTests - [int]$failures - [int]$errors
             
-            $summary = @"
-          ### Pester Test Results
+            # NUnitXml format uses 'test-results' as root element
+            $rootElement = $testResults.'test-results'
+            
+            if ($rootElement) {
+              $totalTests = $rootElement.total
+              $failures = $rootElement.failures
+              $errors = $rootElement.errors
+              $notRun = $rootElement.'not-run'
+              $inconclusive = $rootElement.inconclusive
+              $ignored = $rootElement.ignored
+              $skipped = $rootElement.skipped
+              $invalid = $rootElement.invalid
+              
+              $passed = [int]$totalTests - [int]$failures - [int]$errors - [int]$notRun - [int]$inconclusive - [int]$ignored - [int]$skipped - [int]$invalid
+              
+              Write-Host "Total: $totalTests, Passed: $passed, Failed: $failures, Errors: $errors" -ForegroundColor White
+              
+              $summary = @"
+          ### 🧪 Pester Test Results
           
-          **Total Tests:** $totalTests
-          **Passed:** $passed
-          **Failed:** $failures
-          **Errors:** $errors
-          **Status:** $(if ([int]$failures -eq 0 -and [int]$errors -eq 0) { 'PASSED' } else { 'FAILED' })
+          | Metric | Count |
+          |--------|-------|
+          | **Total Tests** | $totalTests |
+          | **✅ Passed** | $passed |
+          | **❌ Failed** | $failures |
+          | **⚠️ Errors** | $errors |
+          | **⏭️ Skipped** | $skipped |
+          | **Status** | $(if ([int]$failures -eq 0 -and [int]$errors -eq 0) { '✅ **PASSED**' } else { '❌ **FAILED**' }) |
           "@
-            
-            $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              
+              Write-Host "Writing summary to GITHUB_STEP_SUMMARY..."
+              $summary | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+              Write-Host "Summary written successfully" -ForegroundColor Green
+            } else {
+              Write-Host "ERROR: Could not parse test-results root element" -ForegroundColor Red
+              Get-Content test-results.xml | Select-Object -First 20
+            }
+          } else {
+            Write-Host "ERROR: test-results.xml file not found" -ForegroundColor Red
           }
