@@ -2,14 +2,10 @@ name: Deploy Module to ACR
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches: [main]
+    paths: ['tag.yaml']
   workflow_dispatch:
     inputs:
-      version:
-        description: 'Module version (e.g., 1.0.0)'
-        required: true
-        default: '1.0.0'
       force_publish:
         description: 'Force publish even if version exists'
         required: false
@@ -18,44 +14,59 @@ on:
 env:
   ACR_NAME: msftlabsbicepmods
   ACR_LOGIN_SERVER: msftlabsbicepmods.azurecr.io
-  MODULE_NAME: storageaccount
   MODULE_PATH: bicep/modules
   SUBSCRIPTION_ID: b18ea7d6-14b5-41f3-a00d-804a5180c589
 
 permissions:
-  contents: read  # Read-only access for checking out code
+  contents: write  # Required to create git tags
 
 jobs:
   validate:
     name: Validate Before Publish
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.tag_info.outputs.version }}
+      module_name: ${{ steps.tag_info.outputs.module }}
+      description: ${{ steps.tag_info.outputs.description }}
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       
-      - name: Determine Version
-        id: version
+      - name: Read tag.yaml
+        id: tag_info
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            VERSION="${GITHUB_REF#refs/tags/v}"
-          fi
+          MODULE=$(yq e '.module' tag.yaml)
+          VERSION=$(yq e '.version' tag.yaml)
+          DESCRIPTION=$(yq e '.description' tag.yaml)
+          echo "module=$MODULE" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Publishing version: $VERSION"
+          echo "description=$DESCRIPTION" >> $GITHUB_OUTPUT
+          echo "Module: $MODULE | Version: $VERSION"
       
       - name: Validate Version Format
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ steps.tag_info.outputs.version }}"
           if ! [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "Invalid version format: $VERSION"
             echo "Version must follow semantic versioning (e.g., 1.0.0)"
             exit 1
           fi
           echo "Version format valid: $VERSION"
+      
+      - name: Check if Git Tag Exists
+        id: check_tag
+        run: |
+          VERSION="v${{ steps.tag_info.outputs.version }}"
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "tag_exists=true" >> $GITHUB_OUTPUT
+            echo "Git tag $VERSION already exists"
+          else
+            echo "tag_exists=false" >> $GITHUB_OUTPUT
+            echo "Git tag $VERSION is new"
+          fi
       
       - name: Azure Login
         uses: azure/login@v2
@@ -74,15 +85,15 @@ jobs:
           
           echo "Bicep validation successful"
       
-      - name: Check if Version Exists
+      - name: Check if Version Exists in ACR
         id: check_version
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ steps.tag_info.outputs.version }}"
+          MODULE="${{ steps.tag_info.outputs.module }}"
           
-          # Check if tag exists in ACR
           TAGS=$(az acr repository show-tags \
             --name ${{ env.ACR_NAME }} \
-            --repository ${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }} \
+            --repository ${{ env.MODULE_PATH }}/${MODULE} \
             --output tsv 2>/dev/null || echo "")
           
           if echo "$TAGS" | grep -q "^${VERSION}$"; then
@@ -96,18 +107,36 @@ jobs:
       - name: Validate Version Uniqueness
         if: steps.check_version.outputs.version_exists == 'true' && github.event.inputs.force_publish != 'true'
         run: |
-          echo "Version ${{ steps.version.outputs.version }} already exists in ACR"
-          echo "Use force_publish option or create a new version"
+          echo "Version ${{ steps.tag_info.outputs.version }} already exists in ACR"
+          echo "Use force_publish option or bump version in tag.yaml"
           exit 1
 
-  publish:
-    name: Publish to ACR
+  tag-and-publish:
+    name: Tag & Publish to ACR
     runs-on: ubuntu-latest
     needs: validate
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Create Git Tag
+        run: |
+          VERSION="v${{ needs.validate.outputs.version }}"
+          DESCRIPTION="${{ needs.validate.outputs.description }}"
+          
+          # Check if tag already exists
+          if git rev-parse "$VERSION" >/dev/null 2>&1; then
+            echo "Git tag $VERSION already exists — skipping tag creation"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$VERSION" -m "$DESCRIPTION"
+            git push origin "$VERSION"
+            echo "Created and pushed git tag: $VERSION"
+          fi
       
       - name: Azure Login
         uses: azure/login@v2
@@ -125,7 +154,8 @@ jobs:
       - name: Publish Module to ACR (Versioned)
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          TARGET="br:${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }}:${VERSION}"
+          MODULE="${{ needs.validate.outputs.module_name }}"
+          TARGET="br:${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${MODULE}:${VERSION}"
           
           echo "Publishing to: $TARGET"
           
@@ -138,7 +168,8 @@ jobs:
       
       - name: Publish Latest Tag
         run: |
-          TARGET="br:${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }}:latest"
+          MODULE="${{ needs.validate.outputs.module_name }}"
+          TARGET="br:${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${MODULE}:latest"
           
           echo "Publishing latest tag to: $TARGET"
           
@@ -152,12 +183,13 @@ jobs:
       - name: Verify Publication
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
+          MODULE="${{ needs.validate.outputs.module_name }}"
           
           echo "Verifying published module..."
           
           TAGS=$(az acr repository show-tags \
             --name ${{ env.ACR_NAME }} \
-            --repository ${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }} \
+            --repository ${{ env.MODULE_PATH }}/${MODULE} \
             --output table)
           
           echo "Available tags:"
@@ -173,38 +205,25 @@ jobs:
       - name: Generate Deployment Summary
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          MODULE_REF="br:${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${{ env.MODULE_NAME }}:${VERSION}"
+          MODULE="${{ needs.validate.outputs.module_name }}"
+          MODULE_REF="br:${{ env.ACR_LOGIN_SERVER }}/${{ env.MODULE_PATH }}/${MODULE}:${VERSION}"
           
           cat >> $GITHUB_STEP_SUMMARY << EOF
           ### Module Published Successfully
           
-          **Module:** ${{ env.MODULE_NAME }}
+          **Module:** ${MODULE}
           **Version:** ${VERSION}
+          **Description:** ${{ needs.validate.outputs.description }}
           **Registry:** ${{ env.ACR_LOGIN_SERVER }}
+          **Git Tag:** v${VERSION}
           **Published:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")
           
           **Module Reference:**
           \`\`\`bicep
-          module storage '${MODULE_REF}' = {
-            name: 'storageAccountDeployment'
+          module ${MODULE} '${MODULE_REF}' = {
+            name: '${MODULE}Deployment'
             params: {
-              storageAccountName: 'mystorageaccount'
-              tags: {
-                Environment: 'Production'
-              }
-            }
-          }
-          \`\`\`
-          
-          **Using Alias (with bicepconfig.json):**
-          \`\`\`bicep
-          module storage 'br/msftlabsbicepmods:${{ env.MODULE_NAME }}:${VERSION}' = {
-            name: 'storageAccountDeployment'
-            params: {
-              storageAccountName: 'mystorageaccount'
-              tags: {
-                Environment: 'Production'
-              }
+              // See README for required parameters
             }
           }
           \`\`\`

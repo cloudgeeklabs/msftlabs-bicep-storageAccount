@@ -113,16 +113,16 @@ jobs:
               Write-Host "Total: $totalTests, Passed: $passed, Failed: $failures, Errors: $errors" -ForegroundColor White
               
               $summary = @"
-          ### 🧪 Pester Test Results
+          ### Pester Test Results
           
           | Metric | Count |
           |--------|-------|
           | **Total Tests** | $totalTests |
-          | **✅ Passed** | $passed |
-          | **❌ Failed** | $failures |
-          | **⚠️ Errors** | $errors |
-          | **⏭️ Skipped** | $skipped |
-          | **Status** | $(if ([int]$failures -eq 0 -and [int]$errors -eq 0) { '✅ **PASSED**' } else { '❌ **FAILED**' }) |
+          | **Passed** | $passed |
+          | **Failed** | $failures |
+          | **Errors** | $errors |
+          | **Skipped** | $skipped |
+          | **Status** | $(if ([int]$failures -eq 0 -and [int]$errors -eq 0) { 'PASSED' } else { 'FAILED' }) |
           "@
               
               Write-Host "Writing summary to GITHUB_STEP_SUMMARY..."
