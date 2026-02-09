@@ -58,7 +58,7 @@ var privateDnsZoneName = privateDnsZoneNameMap[service]
 
 // Deploy Private Endpoint for Storage Account
 // MSLearn: https://learn.microsoft.com/azure/templates/microsoft.network/privateendpoints
-resource privateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
+resource privateEndpoint 'Microsoft.Network/privateEndpoints@2025-05-01' = {
   name: privateEndpointName
   location: location
   tags: tags
@@ -84,7 +84,7 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = {
 // Only deployed when a Private DNS Zone resource ID is provided
 // This enables automatic A-record registration in the Private DNS Zone
 // so that the storage account FQDN resolves to the private IP address
-resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = if (!empty(privateDnsZoneResourceId)) {
+resource privateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2025-05-01' = if (!empty(privateDnsZoneResourceId)) {
   parent: privateEndpoint
   name: 'default'
   properties: {
