@@ -92,6 +92,26 @@ param lockLevel string = 'CanNotDelete'
 @description('Optional. RBAC role assignments for the storage account.')
 param roleAssignments roleAssignmentType[] = []
 
+@description('Optional. Private endpoint configuration. If provided, deploys a private endpoint for the storage account.')
+param privateEndpointConfig privateEndpointConfigType?
+
+@description('Optional. Public network access setting. Disabled by default for security.')
+@allowed([
+  'Disabled'
+  'Enabled'
+  'SecuredByPerimeter'
+])
+param publicNetworkAccess string = 'Disabled'
+
+@description('Optional. Immutable storage with versioning configuration. If provided, enables account-level immutability.')
+param immutableStorageConfig immutableStorageConfigType?
+
+@description('Optional. Enable hierarchical namespace (HNS) for Data Lake Storage Gen2.')
+param isHnsEnabled bool = false
+
+@description('Optional. Availability zones for the storage account.')
+param zones string[] = []
+
 @description('Required. Resource tags for organization and cost management.')
 param tags object
 
@@ -143,6 +163,10 @@ module storageAccount 'modules/storageAccount.bicep' = if (isValidLength) {
     defaultToOAuthAuthentication: defaultToOAuthAuthentication
     allowSharedKeyAccess: allowSharedKeyAccess
     allowBlobPublicAccess: allowBlobPublicAccess
+    publicNetworkAccess: publicNetworkAccess
+    isHnsEnabled: isHnsEnabled
+    immutableStorageWithVersioning: immutableStorageConfig
+    zones: zones
     tags: tags
   }
 }
@@ -220,6 +244,23 @@ module rbac 'modules/rbac.bicep' = if (!empty(roleAssignments) && isValidLength)
   params: {
     storageAccountName: storageAccount.?outputs.name ?? ''
     roleAssignments: roleAssignments
+  }
+}
+
+// Deploy Private Endpoint for Storage Account
+// Conditional deployment - only deploys when privateEndpointConfig is provided
+// Requires existing VNet/Subnet and Private DNS Zone infrastructure
+module privateEndpoint 'modules/privateEndpoint.bicep' = if (privateEndpointConfig != null && isValidLength) {
+  name: '${uniqueString(deployment().name, location)}-private-endpoint'
+  params: {
+    storageAccountName: storageAccount.?outputs.name ?? ''
+    storageAccountResourceId: storageAccount.?outputs.resourceId ?? ''
+    subnetResourceId: privateEndpointConfig!.subnetResourceId
+    service: privateEndpointConfig!.?service ?? 'blob'
+    privateEndpointName: privateEndpointConfig!.?privateEndpointName ?? 'pe-${storageAccount.?outputs.name ?? ''}-${privateEndpointConfig!.?service ?? 'blob'}'
+    privateDnsZoneResourceId: privateEndpointConfig!.?privateDnsZoneResourceId ?? ''
+    location: location
+    tags: tags
   }
 }
 
@@ -317,4 +358,39 @@ type roleAssignmentType = {
 
   @description('The types of principal.')
   principalType: ('ServicePrincipal' | 'Group' | 'User' | 'ManagedIdentity')?
+}
+
+@description('Private endpoint configuration type.')
+type privateEndpointConfigType = {
+  @description('Required. The resource ID of the subnet where the private endpoint will be created.')
+  subnetResourceId: string
+
+  @description('Optional. The private link service group ID (sub-resource). Defaults to blob.')
+  service: ('blob' | 'file' | 'queue' | 'table' | 'web' | 'dfs')?
+
+  @description('Optional. Custom name for the private endpoint. Auto-generated if not provided.')
+  privateEndpointName: string?
+
+  @description('Optional. Resource ID of the Private DNS Zone to link. If empty, DNS zone group is not created.')
+  privateDnsZoneResourceId: string?
+}
+
+@description('Immutable storage with versioning configuration type.')
+type immutableStorageConfigType = {
+  @description('Required. Enable account-level immutability. All new containers inherit object-level immutability by default.')
+  enabled: bool
+
+  @description('Optional. Account-level immutability policy configuration.')
+  immutabilityPolicy: {
+    @description('Optional. Allow new blocks to be written to append blobs while maintaining immutability. Default is false.')
+    allowProtectedAppendWrites: bool?
+
+    @description('Required. Immutability period in days since policy creation (1-146000).')
+    @minValue(1)
+    @maxValue(146000)
+    immutabilityPeriodSinceCreationInDays: int
+
+    @description('Required. Policy state: Disabled, Unlocked (allows changes), or Locked (only increase retention).')
+    state: ('Disabled' | 'Unlocked' | 'Locked')
+  }?
 }

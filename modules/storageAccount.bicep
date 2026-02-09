@@ -50,6 +50,23 @@ param allowSharedKeyAccess bool = false
 @description('Optional. Allow public blob access. Set to false to prevent anonymous access.')
 param allowBlobPublicAccess bool = false
 
+@description('Optional. Public network access setting. Disabled by default for security.')
+@allowed([
+  'Disabled'
+  'Enabled'
+  'SecuredByPerimeter'
+])
+param publicNetworkAccess string = 'Disabled'
+
+@description('Optional. Enable hierarchical namespace (HNS) for Data Lake Storage Gen2. Default is false.')
+param isHnsEnabled bool = false
+
+@description('Optional. Immutable storage with versioning configuration. If provided, enables account-level immutability.')
+param immutableStorageWithVersioning immutableStorageConfigType?
+
+@description('Optional. Availability zones for the storage account.')
+param zones string[] = []
+
 @description('Required. Resource tags for organization and cost tracking.')
 param tags object
 
@@ -111,6 +128,7 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2025-06-01' = {
     name: skuName
   }
   tags: tags
+  zones: !empty(zones) ? zones : null
   properties: {
     accessTier: accessTier
     minimumTlsVersion: minimumTlsVersion
@@ -118,6 +136,16 @@ resource storageAccount 'Microsoft.Storage/storageAccounts@2025-06-01' = {
     allowSharedKeyAccess: allowSharedKeyAccess
     allowBlobPublicAccess: allowBlobPublicAccess
     defaultToOAuthAuthentication: defaultToOAuthAuthentication
+    publicNetworkAccess: publicNetworkAccess
+    isHnsEnabled: isHnsEnabled
+    immutableStorageWithVersioning: immutableStorageWithVersioning != null ? {
+      enabled: immutableStorageWithVersioning!.enabled
+      immutabilityPolicy: immutableStorageWithVersioning!.?immutabilityPolicy != null ? {
+        allowProtectedAppendWrites: immutableStorageWithVersioning!.immutabilityPolicy!.?allowProtectedAppendWrites ?? false
+        immutabilityPeriodSinceCreationInDays: immutableStorageWithVersioning!.immutabilityPolicy!.immutabilityPeriodSinceCreationInDays
+        state: immutableStorageWithVersioning!.immutabilityPolicy!.state
+      } : null
+    } : null
     networkAcls: networkAcls
     encryption: encryption
   }
@@ -144,3 +172,27 @@ output location string = storageAccount.location
 
 @description('The API version used for deployment.')
 output apiVersion string = storageAccount.apiVersion
+
+// ============== //
+// Type Definitions //
+// ============== //
+
+@description('Immutable storage with versioning configuration type.')
+type immutableStorageConfigType = {
+  @description('Required. Enable account-level immutability. All new containers inherit object-level immutability by default.')
+  enabled: bool
+
+  @description('Optional. Account-level immutability policy configuration.')
+  immutabilityPolicy: {
+    @description('Optional. Allow new blocks to be written to append blobs while maintaining immutability. Default is false.')
+    allowProtectedAppendWrites: bool?
+
+    @description('Required. Immutability period in days since policy creation (1-146000).')
+    @minValue(1)
+    @maxValue(146000)
+    immutabilityPeriodSinceCreationInDays: int
+
+    @description('Required. Policy state: Disabled, Unlocked (allows changes), or Locked (only increase retention).')
+    state: ('Disabled' | 'Unlocked' | 'Locked')
+  }?
+}
