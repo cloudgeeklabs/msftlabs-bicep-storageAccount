@@ -51,13 +51,13 @@ jobs:
           $parametersFile = "tests/test.parameters.json"
           $parameters = Get-Content $parametersFile | ConvertFrom-Json
           
-          # Generate unique storage account name
-          $uniqueName = "ghtest${{ github.run_number }}"
-          $parameters.parameters.storageAccountName.value = $uniqueName
+          # Generate unique workload name (max 10 chars, lowercase alphanumeric)
+          $uniqueName = "ght${{ github.run_number }}"
+          $parameters.parameters.workloadName.value = $uniqueName
           
           $parameters | ConvertTo-Json -Depth 10 | Set-Content $parametersFile
           
-          Write-Host "Updated storage account name to: $uniqueName"
+          Write-Host "Updated workloadName to: $uniqueName"
       
       - name: Run Pester Tests
         shell: pwsh

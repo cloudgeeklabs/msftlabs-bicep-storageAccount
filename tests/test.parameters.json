@@ -2,11 +2,14 @@
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
   "parameters": {
-    "storageAccountName": {
-      "value": "ghtest123456"
+    "workloadName": {
+      "value": "ghtest"
     },
     "location": {
       "value": "centralus"
+    },
+    "environment": {
+      "value": "test"
     },
     "kind": {
       "value": "StorageV2"
@@ -26,10 +29,19 @@
     "allowBlobPublicAccess": {
       "value": false
     },
+    "enableLock": {
+      "value": false
+    },
+    "enableDiagnostics": {
+      "value": false
+    },
+    "publicNetworkAccess": {
+      "value": "Enabled"
+    },
     "tags": {
       "value": {
         "Environment": "Test",
-        "ManagedBy": "Pester",
+        "ManagedBy": "CI",
         "Purpose": "ModuleTesting"
       }
     }
