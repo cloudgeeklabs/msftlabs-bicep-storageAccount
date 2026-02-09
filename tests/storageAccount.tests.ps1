@@ -2,8 +2,65 @@
 
 BeforeAll {
     $ModulePath = Split-Path -Parent $PSScriptRoot
-    $TemplatePath = Join-Path $ModulePath "main.bicep"
+    $TemplatePath = Join-Path $ModulePath "modules\storageAccount.bicep"
     $ParametersPath = Join-Path $PSScriptRoot "test.parameters.json"
+    $script:ValidateOutputPath = Join-Path $PSScriptRoot "validate.json"
+
+    # Create a randomly named resource group for validation
+    $randomSuffix = -join ((97..122) | Get-Random -Count 6 | ForEach-Object { [char]$_ })
+    $script:TestResourceGroup = "rg-pester-validate-$randomSuffix"
+    $script:TestLocation = 'centralus'
+
+    Write-Host ('Creating temporary resource group: {0}' -f $script:TestResourceGroup) -ForegroundColor Cyan
+    az group create --name $script:TestResourceGroup --location $script:TestLocation --output none 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw ('Failed to create resource group: {0}' -f $script:TestResourceGroup)
+    }
+
+    # Build the Bicep template
+    Write-Host 'Building Bicep template...' -ForegroundColor Cyan
+    az bicep build --file $TemplatePath --outfile "${TemplatePath}.json" 2>&1 | Out-Null
+    
+    # Run bicep validation and capture output as JSON
+    Write-Host 'Running bicep validation with test parameters...' -ForegroundColor Cyan
+    $validateResult = az deployment group validate `
+        --resource-group $script:TestResourceGroup `
+        --template-file $TemplatePath `
+        --parameters $ParametersPath `
+        --no-prompt `
+        --output json 2>$null
+    
+    $script:ValidateExitCode = $LASTEXITCODE
+
+    # Save validation output to JSON file
+    if ($script:ValidateExitCode -eq 0 -and $validateResult) {
+        $validateResult | Out-File -FilePath $script:ValidateOutputPath -Encoding utf8
+        Write-Host ('Validation output saved to: {0}' -f $script:ValidateOutputPath) -ForegroundColor Green
+    } else {
+        # On failure, re-run capturing stderr for diagnostics
+        $errorOutput = az deployment group validate `
+            --resource-group $script:TestResourceGroup `
+            --template-file $TemplatePath `
+            --parameters $ParametersPath `
+            --no-prompt `
+            --output json 2>&1
+        $errorText = ($errorOutput | Where-Object { $_ -is [System.Management.Automation.ErrorRecord] }) -join "`n"
+        # Extract JSON from error output if present (az cli includes JSON in ERROR: lines)
+        $jsonMatch = [regex]::Match($errorText, '\{.*\}')
+        if ($jsonMatch.Success) {
+            $jsonMatch.Value | Out-File -FilePath $script:ValidateOutputPath -Encoding utf8
+        } else {
+            $errorText | Out-File -FilePath $script:ValidateOutputPath -Encoding utf8
+        }
+        Write-Warning ('Validation failed with exit code: {0}' -f $script:ValidateExitCode)
+    }
+    
+    # Parse validation output for use in tests
+    $script:ValidationOutput = if (Test-Path $script:ValidateOutputPath) {
+        Get-Content $script:ValidateOutputPath -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+    } else {
+        $null
+    }
 }
 
 Describe "Bicep Module: Storage Account" {
@@ -11,12 +68,12 @@ Describe "Bicep Module: Storage Account" {
     Context "Static Analysis" {
         
         It "Should have valid Bicep syntax" {
-            $build = az bicep build --file $TemplatePath 2>&1
+            $null = az bicep build --file $TemplatePath 2>&1
             $LASTEXITCODE | Should -Be 0
         }
         
         It "Should generate ARM template" {
-            $armTemplatePath = $TemplatePath -replace '\.bicep$', '.json'
+            $armTemplatePath = "${TemplatePath}.json"
             Test-Path $armTemplatePath | Should -Be $true
         }
         
@@ -28,75 +85,118 @@ Describe "Bicep Module: Storage Account" {
         }
         
         It "Should have storage account name sanitization" {
-            $moduleContent = Get-Content (Join-Path $ModulePath "modules/storageAccount.bicep") -Raw
+            $moduleContent = Get-Content $TemplatePath -Raw
             $moduleContent | Should -Match "var sanitizedStorageAccountName"
             $moduleContent | Should -Match "toLower"
             $moduleContent | Should -Match "replace.*storageAccountName"
         }
         
         It "Should enforce TLS 1.2 minimum" {
-            $moduleContent = Get-Content (Join-Path $ModulePath "modules/storageAccount.bicep") -Raw
+            $moduleContent = Get-Content $TemplatePath -Raw
             $moduleContent | Should -Match "minimumTlsVersion.*TLS1_2"
         }
         
         It "Should sanitize storage account name to Azure standards" {
-            # Test that sanitization logic exists and handles special characters
-            $moduleContent = Get-Content (Join-Path $ModulePath "modules/storageAccount.bicep") -Raw
-            # Check for regex pattern that removes non-alphanumeric characters
+            $moduleContent = Get-Content $TemplatePath -Raw
             $moduleContent | Should -Match "replace.*\[.*a-z0-9.*\]"
         }
         
         It "Should enforce storage account name length constraints" {
-            $moduleContent = Get-Content (Join-Path $ModulePath "modules/storageAccount.bicep") -Raw
-            # Check for minLength and maxLength decorators
+            $moduleContent = Get-Content $TemplatePath -Raw
             $moduleContent | Should -Match "@minLength\(3\)"
             $moduleContent | Should -Match "@maxLength\(24\)"
         }
     }
     
-    Context "Template Validation" {
-        
-        It "Should have valid ARM template schema" {
-            $armTemplatePath = $TemplatePath -replace '\.bicep$', '.json'
-            $template = Get-Content $armTemplatePath | ConvertFrom-Json
-            
-            $template.'$schema' | Should -Not -BeNullOrEmpty
-            $template.resources | Should -Not -BeNullOrEmpty
+    Context "Validation Output Tests" {
+
+        BeforeAll {
+            $script:Params = $script:ValidationOutput.properties.parameters
+            $script:ValidatedResource = $script:ValidationOutput.properties.validatedResources |
+                Where-Object { $_.id -match 'Microsoft.Storage/storageAccounts' }
+            # Parse the compiled ARM template for resource-level property assertions
+            $armPath = "${TemplatePath}.json"
+            $script:ArmTemplate = if (Test-Path $armPath) {
+                Get-Content $armPath -Raw | ConvertFrom-Json -ErrorAction SilentlyContinue
+            } else { $null }
         }
         
-        It "Should define storage account module deployment" {
-            $armTemplatePath = $TemplatePath -replace '\.bicep$', '.json'
-            $template = Get-Content $armTemplatePath | ConvertFrom-Json
-            
-            # For module-based templates, deployments are in resources[0] as properties
-            $moduleDeployments = $template.resources[0].PSObject.Properties | Where-Object {
-                $_.Value.type -eq "Microsoft.Resources/deployments"
-            }
-            
-            # Should have at least one deployment (storageAccount module)
-            $moduleDeployments | Should -Not -BeNullOrEmpty
-            $moduleDeployments.Name | Should -Contain 'storageAccount'
+        It "Should have validation output file" {
+            Test-Path $script:ValidateOutputPath | Should -Be $true
         }
         
-        It "Should have required parameters defined" {
-            $armTemplatePath = $TemplatePath -replace '\.bicep$', '.json'
-            $template = Get-Content $armTemplatePath | ConvertFrom-Json
-            
-            # Check for workloadName (used to generate storage account name) and location
-            $template.parameters.workloadName | Should -Not -BeNullOrEmpty
-            $template.parameters.location | Should -Not -BeNullOrEmpty
+        It "Should have valid validation output JSON" {
+            $script:ValidationOutput | Should -Not -BeNullOrEmpty
         }
         
-        It "Should have outputs defined" {
-            $armTemplatePath = $TemplatePath -replace '\.bicep$', '.json'
-            $template = Get-Content $armTemplatePath | ConvertFrom-Json
-            
-            $template.outputs | Should -Not -BeNullOrEmpty
-            $template.outputs.resourceId | Should -Not -BeNullOrEmpty
+        It "Should pass validation without errors" {
+            $script:ValidationOutput.error | Should -BeNullOrEmpty
+            $script:ValidationOutput.properties.provisioningState | Should -Be 'Succeeded'
+        }
+        
+        It "Should have validated resources in output" {
+            $script:ValidatedResource | Should -Not -BeNullOrEmpty
+        }
+
+        It "Should validate storage account name is sanitized" {
+            $name = ($script:ValidatedResource.id -split '/')[-1]
+            $name | Should -Match '^[a-z0-9]{3,24}$'
+        }
+
+        It "Should validate SKU is Standard_LRS from parameters" {
+            $script:Params.skuName.value | Should -Be 'Standard_LRS'
+        }
+        
+        It "Should validate kind is StorageV2 from parameters" {
+            $script:Params.kind.value | Should -Be 'StorageV2'
+        }
+
+        It "Should validate access tier is Hot from parameters" {
+            $script:Params.accessTier.value | Should -Be 'Hot'
+        }
+
+        It "Should validate shared key access is disabled" {
+            $script:Params.allowSharedKeyAccess.value | Should -Be $false
+        }
+        
+        It "Should validate blob public access is disabled" {
+            $script:Params.allowBlobPublicAccess.value | Should -Be $false
+        }
+        
+        It "Should validate OAuth authentication is default" {
+            $script:Params.defaultToOAuthAuthentication.value | Should -Be $true
+        }
+
+        It "Should validate minimum TLS version is 1.2" {
+            $script:Params.minimumTlsVersion.value | Should -Be 'TLS1_2'
+        }
+
+        It "Should validate tags are applied from parameters" {
+            $script:Params.tags.value | Should -Not -BeNullOrEmpty
+            $script:Params.tags.value.ManagedBy | Should -Be 'Pester'
+            $script:Params.tags.value.Environment | Should -Be 'Test'
+            $script:Params.tags.value.Purpose | Should -Be 'ModuleTesting'
+        }
+
+        It "Should have HTTPS-only enforced in ARM template" {
+            $script:ArmTemplate | Should -Not -BeNullOrEmpty
+            $armContent = $script:ArmTemplate | ConvertTo-Json -Depth 20
+            $armContent | Should -Match 'supportsHttpsTrafficOnly.*true'
+        }
+
+        It "Should have network ACLs deny by default in ARM template" {
+            $armContent = $script:ArmTemplate | ConvertTo-Json -Depth 20
+            $armContent | Should -Match '"defaultAction".*"Deny"'
         }
     }
 }
 
 AfterAll {
-    Write-Host "Test cleanup completed"
+    # Delete the temporary resource group
+    if ($script:TestResourceGroup) {
+        Write-Host ('Deleting temporary resource group: {0}' -f $script:TestResourceGroup) -ForegroundColor Cyan
+        az group delete --name $script:TestResourceGroup --yes --no-wait --output none 2>$null
+    }
+    Write-Host 'Test cleanup completed' -ForegroundColor Cyan
+    Write-Host ('Validation output preserved at: {0}' -f $script:ValidateOutputPath) -ForegroundColor Yellow
 }
