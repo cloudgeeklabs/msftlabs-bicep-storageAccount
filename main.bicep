@@ -1,7 +1,7 @@
 metadata name = 'StorageAccount Module'
 metadata description = 'Deploys Azure Storage Account with required configurations!'
 metadata owner = 'cloudgeeklabs'
-metadata version = '1.0.0'
+metadata version = '1.0.2'
 
 targetScope = 'resourceGroup'
 
@@ -214,12 +214,17 @@ module tableService 'modules/tableService.bicep' = if (!empty(tableConfig) && is
 }
 
 // Deploy Diagnostic Settings for metrics collection
+// Configures diagnostics for the storage account and conditionally for child services
+// Blob, Queue, and Table diagnostics are only enabled when those services are deployed
 module diagnostics 'modules/diagnostics.bicep' = if (enableDiagnostics && isValidLength) {
   name: '${uniqueString(deployment().name, location)}-diagnostics'
   params: {
     storageAccountName: storageAccount.?outputs.name ?? ''
     workspaceId: mergedWorkspaceId
     enableMetrics: true
+    enableBlobDiagnostics: !empty(blobConfig)
+    enableQueueDiagnostics: !empty(queueConfig)
+    enableTableDiagnostics: !empty(tableConfig)
   }
 }
 
